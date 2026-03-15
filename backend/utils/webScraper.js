@@ -5,48 +5,63 @@ const extractTextFromURL = async (url) => {
   try {
     const { data } = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
       },
-      timeout: 10000
+      timeout: 15000
     });
     const $ = cheerio.load(data);
     
-    // Remove unnecessary elements
-    $('script, style, nav, footer, header, .sidebar, .menu, #comments, .ads, .social-share').remove();
+    // Remove purely decorative or non-content elements
+    $('script, style, nav, footer, header, .sidebar, .menu, #comments, .ads, .social-share, svg, noscript').remove();
     
-    // Target meaningful content
-    const selectors = [
-      'main', 'article', '.content', '#content', 
-      '.post-content', '.entry-content', '.page-content',
-      '.td-post-content', '.post-text', '.body-text',
-      '.mw-parser-output' // For wiki-style pages
-    ];
-    
-    let text = '';
-    
-    // Try each selector
-    for (const selector of selectors) {
-      if ($(selector).length > 0) {
-        $(selector).each((i, el) => {
-          text += $(el).text() + '\n';
+    // Custom logic to preserve table structures and lists
+    $('table').each((i, el) => {
+      let tableText = '\n[Table Start]\n';
+      $(el).find('tr').each((trIdx, tr) => {
+        const cells = [];
+        $(tr).find('th, td').each((tdIdx, td) => {
+          cells.push($(td).text().trim());
         });
-        if (text.length > 200) break; // If we found good content, stop
+        tableText += cells.join(' | ') + '\n';
+      });
+      tableText += '[Table End]\n';
+      $(el).replaceWith(tableText);
+    });
+
+    $('ul, ol').each((i, el) => {
+      let listText = '\n';
+      $(el).find('li').each((liIdx, li) => {
+        listText += `• ${$(li).text().trim()}\n`;
+      });
+      $(el).replaceWith(listText);
+    });
+
+    // Target main content area but be more inclusive
+    const mainSelectors = ['main', 'article', '.content', '#content', '.page-body', '.body-content'];
+    let contentFound = false;
+    let extractedText = '';
+
+    for (const selector of mainSelectors) {
+      if ($(selector).length > 0) {
+        extractedText = $(selector).text();
+        contentFound = true;
+        break;
       }
     }
-    
-    // Fallback to body if nothing specific found
-    if (text.trim().length < 100) {
-      text = $('body').text();
+
+    if (!contentFound) {
+      extractedText = $('body').text();
     }
     
-    // Aggressive cleaning
-    return text
+    // Advanced cleaning while preserving structural markers
+    return extractedText
       .replace(/[\t\r]/g, ' ')
-      .replace(/\n\s*\n/g, '\n\n') // Keep double newlines for chunking
-      .replace(/\s{2,}/g, ' ')
+      .replace(/\n\s*\n/g, '\n\n') // Preserve paragraph breaks
+      .replace(/[ ]{2,}/g, ' ')
       .trim();
   } catch (error) {
-    console.error('URL extraction failed:', error.message);
+    console.error(`URL extraction failed for ${url}:`, error.message);
     throw error;
   }
 };

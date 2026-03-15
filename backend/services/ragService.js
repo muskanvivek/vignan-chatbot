@@ -93,19 +93,30 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
 
     results.sort((a, b) => b.priorityScore - a.priorityScore);
     
-    // Pick the top 15 for re-ranking
-    const candidates = results.slice(0, 15);
+    // Pick the top candidates for re-ranking
+    const candidates = results.slice(0, 20);
     
     console.log(`[RAG] Re-ranking ${candidates.length} candidates...`);
     const rerankedIndices = await rerankContext(queryText, candidates.map(c => c.text));
     
-    // Sort candidates by the reranked order if available
+    // Final check: If re-ranking fails or returns weird results, fallback to original top 10
     let finalResults = [];
     if (rerankedIndices && rerankedIndices.length > 0) {
       finalResults = rerankedIndices.map(idx => candidates[idx]).filter(Boolean);
     } else {
-      finalResults = candidates;
+      finalResults = candidates.slice(0, 12);
     }
+
+    // CRITICAL: Permanent Memory Boost
+    // If a result contains exact keywords from the query, boost its priority for the LLM context
+    const queryKeywords = queryText.toLowerCase().split(' ').filter(k => k.length > 3);
+    finalResults = finalResults.map(r => {
+      let finalBoost = 0;
+      queryKeywords.forEach(k => {
+        if (r.text.toLowerCase().includes(k)) finalBoost += 0.2;
+      });
+      return { ...r, finalBoost };
+    }).sort((a, b) => (b.priorityScore + b.finalBoost) - (a.priorityScore + a.finalBoost));
 
     console.log(`[RAG] Top 5 Search Results after Re-ranking:`);
     finalResults.slice(0, 5).forEach((r, i) => {

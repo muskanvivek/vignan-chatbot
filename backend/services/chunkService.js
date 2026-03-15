@@ -1,11 +1,8 @@
-/**
- * Splits text into meaningful chunks, prioritizing double newlines (paragraphs),
- * then single newlines, then sentences, and finally character count.
- */
-const splitIntoChunks = (text, chunkSize = 1000, chunkOverlap = 200) => {
+const splitIntoChunks = (text, chunkSize = 1200, chunkOverlap = 250) => {
   if (!text) return [];
 
-  const cleanText = text.replace(/\s+/g, ' ').trim();
+  // Aggressive cleaning while keeping structure
+  const cleanText = text.replace(/[ ]{2,}/g, ' ').trim();
   const chunks = [];
   let startIndex = 0;
 
@@ -13,36 +10,39 @@ const splitIntoChunks = (text, chunkSize = 1000, chunkOverlap = 200) => {
     let endIndex = startIndex + chunkSize;
 
     if (endIndex >= cleanText.length) {
-      chunks.push(cleanText.slice(startIndex));
+      chunks.push(cleanText.slice(startIndex).trim());
       break;
     }
 
-    // Try to find a good breaking point in the overlap region
-    const overlapSearchArea = cleanText.slice(endIndex - chunkOverlap, endIndex);
-    
-    // Look for sentence endings (. ! ?)
-    let breakPoint = -1;
-    const sentenceEndings = /[.!?]\s/g;
-    let match;
-    while ((match = sentenceEndings.exec(overlapSearchArea)) !== null) {
-      breakPoint = match.index + 1;
-    }
-
-    if (breakPoint !== -1) {
-      endIndex = (endIndex - chunkOverlap) + breakPoint;
+    // Prioritize structural breaks like [Table End] or paragraph ends
+    const structuralBreak = cleanText.slice(endIndex - chunkOverlap, endIndex).lastIndexOf('[Table End]');
+    if (structuralBreak !== -1) {
+      endIndex = (endIndex - chunkOverlap) + structuralBreak + 11; // Include "[Table End]"
     } else {
-      // If no sentence ending, look for space
-      const lastSpace = overlapSearchArea.lastIndexOf(' ');
-      if (lastSpace !== -1) {
-        endIndex = (endIndex - chunkOverlap) + lastSpace;
+      // Fallback to sentence or paragraph endings
+      const overlapSearchArea = cleanText.slice(endIndex - chunkOverlap, endIndex);
+      const sentenceEndings = /[.!?]\s/g;
+      let breakPoint = -1;
+      let match;
+      while ((match = sentenceEndings.exec(overlapSearchArea)) !== null) {
+        breakPoint = match.index + 1;
+      }
+
+      if (breakPoint !== -1) {
+        endIndex = (endIndex - chunkOverlap) + breakPoint;
+      } else {
+        const lastSpace = overlapSearchArea.lastIndexOf(' ');
+        if (lastSpace !== -1) {
+          endIndex = (endIndex - chunkOverlap) + lastSpace;
+        }
       }
     }
 
     chunks.push(cleanText.slice(startIndex, endIndex).trim());
-    startIndex = endIndex - (chunkOverlap / 2); // Ensure some overlap for the next chunk
+    startIndex = endIndex - (chunkOverlap / 2); 
   }
 
-  return chunks.filter(c => c.length > 20); // Filter out tiny fragments
+  return chunks.filter(c => c.length > 30);
 };
 
 module.exports = { splitIntoChunks };
