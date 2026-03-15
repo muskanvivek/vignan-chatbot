@@ -163,30 +163,34 @@ const handleChat = async (question, history = []) => {
   // 2. Web Search Fallback
   const topScore = relevantChunks.length > 0 ? (relevantChunks[0].score || 0) : 0;
   
-  if (relevantChunks.length === 0 || topScore < 0.4) {
+  if (relevantChunks.length === 0 || topScore < 0.45) {
     console.log(`[RAG] Local info insufficient (Score: ${topScore}). Triggering Live Web Search...`);
     const webResults = await performLiveWebSearch(question);
     
-    if (webResults) {
+    if (webResults && !webResults.includes('unable to fetch real-time web results')) {
       context += `\n\n[Type: Live Web Search] [Source: Vignan University Portal]\n${webResults}`;
       
-      // OPTIONAL: Permanent Learning
-      // We can automatically ingest the web search result as a "learned" source
+      // PERMANENT LEARNING: Store the web search result for future queries
       try {
-        const Source = require('../models/Source');
-        const Chunk = require('../models/Chunk');
         const learnedSource = await Source.create({
           type: 'url',
-          name: `Auto-Learned: ${question.substring(0, 30)}...`,
+          name: `Auto-Learned: ${question.substring(0, 30)}`,
           folder: '/auto-learned',
           status: 'processed'
         });
-        await Chunk.create({
-          text: webResults,
-          embedding: queryEmbedding, // Re-use the query embedding for this chunk
-          sourceId: learnedSource._id
-        });
-        console.log('[RAG] Successfully stored web results for future use');
+        
+        const webChunks = webResults.split('\n\n');
+        for (const chunk of webChunks) {
+          if (chunk.length > 50) {
+            const embedding = await generateEmbedding(chunk);
+            await Chunk.create({
+              text: chunk,
+              embedding: embedding,
+              sourceId: learnedSource._id
+            });
+          }
+        }
+        console.log(`[RAG] Successfully stored ${webChunks.length} web chunks for future use`);
       } catch (learnErr) {
         console.warn('[RAG] Learning failed:', learnErr.message);
       }
