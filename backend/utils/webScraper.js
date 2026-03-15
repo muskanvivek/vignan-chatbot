@@ -44,9 +44,12 @@ const extractTextFromURL = async (url) => {
 
     for (const selector of mainSelectors) {
       if ($(selector).length > 0) {
-        extractedText = $(selector).text();
-        contentFound = true;
-        break;
+        const candidateText = $(selector).text().trim();
+        if (candidateText.length > 120) {
+          extractedText = candidateText;
+          contentFound = true;
+          break;
+        }
       }
     }
 

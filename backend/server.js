@@ -26,9 +26,9 @@ mongoose.connect(process.env.MONGODB_URI, {
   tlsAllowInvalidCertificates: false
 })
   .then(() => {
-    console.log('[Database] ✅ Successfully connected to MongoDB Atlas');
+    console.log('[Database] Successfully connected to MongoDB Atlas');
     app.listen(PORT, () => {
-      console.log(`[Server] 🚀 Backend is running on port ${PORT}`);
+      console.log(`[Server] Backend is running on port ${PORT}`);
     });
   })
   .catch((error) => {

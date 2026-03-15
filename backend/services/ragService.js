@@ -5,6 +5,45 @@ const { generateEmbedding } = require('./embeddingService');
 const { generateAnswer, rerankContext } = require('./llmService');
 const { performLiveWebSearch } = require('./searchService');
 
+const STOPWORDS = new Set([
+  'what', 'where', 'when', 'how', 'tell', 'about', 'please', 'give', 'details',
+  'the', 'a', 'an', 'is', 'are', 'of', 'to', 'for', 'in', 'on', 'at', 'with', 'and',
+  'my', 'can', 'i', 'be', 'will'
+]);
+
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const isLikelyNoisyChunk = (text = '') => {
+  if (!text || text.length < 20) return true;
+  const cleaned = String(text);
+  const controlChars = (cleaned.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g) || []).length;
+  const replacementChars = (cleaned.match(/�/g) || []).length;
+  const controlRatio = controlChars / cleaned.length;
+  const replacementRatio = replacementChars / cleaned.length;
+
+  if (controlRatio > 0.03 || replacementRatio > 0.12) return true;
+  if (!/[a-zA-Z]{3,}/.test(cleaned)) return true;
+  return false;
+};
+
+const extractQueryKeywords = (queryText) => {
+  const tokens = queryText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(token => ((token.length >= 3 && !STOPWORDS.has(token)) || /^\d{2,3}$/.test(token)));
+
+  if (tokens.length > 0) return tokens.slice(0, 8);
+
+  return queryText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 2)
+    .slice(0, 5);
+};
+
 const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
   try {
     console.log(`[RAG] Starting vector search. Embedding length: ${queryEmbedding.length}`);
@@ -30,35 +69,87 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
         $addFields: {
           sourceType: { $arrayElemAt: ['$source.type', 0] },
           sourceName: { $arrayElemAt: ['$source.name', 0] },
+          sourceFolder: { $arrayElemAt: ['$source.folder', 0] },
           score: { $meta: 'vectorSearchScore' }
         }
       }
     ]);
+
+    const feeIntent = /\b(fee|fees|tuition|hostel|scholarship|payment)\b/i.test(queryText);
+    const eligibilityIntent = /\b(eligible|eligibility|percentage|percent|marks|rank|board|intermediate|category|quota)\b/i.test(queryText);
+
+    if (feeIntent) {
+      const targetedSources = await Source.find({
+        folder: '/fee-program-scholarship',
+        type: 'url'
+      }).select('_id');
+
+      const targetedSourceIds = targetedSources.map(source => source._id);
+      const targetedFeeChunks = targetedSourceIds.length > 0
+        ? await Chunk.find({
+            sourceId: { $in: targetedSourceIds },
+            text: { $regex: /fee|fees|tuition|scholarship|hostel|refund|₹|rs\./i }
+          })
+            .limit(120)
+            .populate('sourceId')
+        : [];
+
+      const targetedMapped = targetedFeeChunks
+        .map(row => ({
+          text: row.text,
+          sourceType: row.sourceId?.type || 'url',
+          sourceName: row.sourceId?.name || 'targeted-fee-source',
+          sourceFolder: row.sourceId?.folder || '',
+          score: 1.4
+        }));
+
+      if (targetedMapped.length > 0) {
+        const seen = new Set(results.map(r => r.text));
+        targetedMapped.forEach(item => {
+          if (!seen.has(item.text)) {
+            results.push(item);
+          }
+        });
+      }
+    }
 
     // Fallback: If Vector Search returned 0 or low-score results, try keyword search
     const topScore = results.length > 0 ? (results[0].score || 0) : 0;
     
     if (results.length === 0 || topScore < 0.35) {
       console.log(`[RAG] Vector results insufficient (Score: ${topScore}). Trying Text Search fallback...`);
-      const keywords = queryText.toLowerCase().split(' ').filter(k => k.length > 3 && !['what', 'where', 'when', 'how', 'tell'].includes(k)).slice(0, 5);
-      const regex = new RegExp(keywords.join('|'), 'i');
+      const keywords = extractQueryKeywords(queryText);
+      const regexPattern = keywords.length > 0
+        ? keywords.map(escapeRegex).join('|')
+        : escapeRegex(queryText.trim());
+      const regex = new RegExp(regexPattern, 'i');
       
       console.log(`[RAG] Keyword Search Regex: ${regex}`);
       
       const textResults = await Chunk.find({ text: { $regex: regex } })
-        .limit(50) // Even higher for text search
+        .limit(80)
         .populate('sourceId');
         
       const mappedTextResults = textResults.map(tr => {
         let textScore = 0.45;
         // Boost if multiple keywords match
-        const matches = keywords.filter(k => tr.text.toLowerCase().includes(k)).length;
+        const lowerText = tr.text.toLowerCase();
+        const sourceName = (tr.sourceId?.name || '').toLowerCase();
+        const matches = keywords.filter(k => lowerText.includes(k)).length;
         textScore += (matches * 0.05);
+
+        if (sourceName.includes('fee') || sourceName.includes('tuition')) {
+          textScore += 0.2;
+        }
+        if (lowerText.includes('tuition fee') || lowerText.includes('fee structure') || lowerText.includes('hostel fee')) {
+          textScore += 0.2;
+        }
 
         return {
           text: tr.text,
           sourceType: tr.sourceId?.type || 'unknown',
           sourceName: tr.sourceId?.name || 'unknown',
+          sourceFolder: tr.sourceId?.folder || '',
           score: textScore
         };
       });
@@ -72,6 +163,9 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
       });
     }
 
+    // Drop noisy/binary chunks before scoring
+    results = results.filter(r => !isLikelyNoisyChunk(r.text));
+
     // Apply prioritization scores
     results = results.map(r => {
       let priorityScore = r.score;
@@ -81,11 +175,22 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
       
       // Additional boost for university-specific keywords
       const lowerText = r.text.toLowerCase();
+      const lowerSourceName = (r.sourceName || '').toLowerCase();
+      const lowerSourceFolder = (r.sourceFolder || '').toLowerCase();
       if (lowerText.includes('vignan') || lowerText.includes('admission')) {
         priorityScore += 0.15;
       }
       if (lowerText.includes('fee') || lowerText.includes('scholarship')) {
         priorityScore += 0.1;
+      }
+      if (feeIntent && (lowerText.includes('fee') || lowerText.includes('tuition') || lowerText.includes('hostel') || lowerSourceName.includes('fee'))) {
+        priorityScore += 0.35;
+      }
+      if (feeIntent && (lowerSourceFolder.includes('/fee-program-scholarship') || lowerSourceName.includes('fee_str.php') || lowerSourceName.includes('targeted: https://vignan.ac.in/newvignan/fee_str.php'))) {
+        priorityScore += 1.2;
+      }
+      if (eligibilityIntent && (lowerText.includes('eligible') || lowerText.includes('eligibility') || lowerText.includes('marks') || lowerText.includes('percent') || lowerText.includes('scholarship') || lowerText.includes('category'))) {
+        priorityScore += 0.55;
       }
       
       return { ...r, priorityScore };
@@ -109,7 +214,7 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
 
     // CRITICAL: Permanent Memory Boost
     // If a result contains exact keywords from the query, boost its priority for the LLM context
-    const queryKeywords = queryText.toLowerCase().split(' ').filter(k => k.length > 3);
+    const queryKeywords = extractQueryKeywords(queryText);
     finalResults = finalResults.map(r => {
       let finalBoost = 0;
       queryKeywords.forEach(k => {
@@ -216,7 +321,7 @@ const handleChat = async (question, history = []) => {
   
   return {
     ...answer,
-    sources: answer.sources || sources,
+    sources,
     sentiment: answer.sentiment || 'neutral'
   };
 };
