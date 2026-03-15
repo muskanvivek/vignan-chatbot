@@ -120,7 +120,27 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
   }
 };
 
+const isGreeting = (text) => {
+  const greetings = ['hi', 'hello', 'hy', 'hey', 'hola', 'namaste', 'good morning', 'good afternoon', 'good evening'];
+  const cleanText = text.toLowerCase().trim();
+  return greetings.some(g => cleanText === g || cleanText === g + '!');
+};
+
 const handleChat = async (question, history = []) => {
+  // 0. Quick Greeting Check
+  if (isGreeting(question)) {
+    console.log('[RAG] Greeting detected, skipping search.');
+    const greetingResponse = {
+      short_answer: "Hello! I'm your Vignan AI Assistant. How can I help you today?",
+      detailed_answer: "Hello! I'm your Vignan University Student Support Assistant. I can help you with admissions, fee details, academic calendars, campus support, and more. How can I assist you today?",
+      sentiment: "friendly",
+      sources: ["System"],
+      suggested_faq: ["What are the B.Tech fees?", "How to apply for admission?", "Tell me about scholarships"],
+      confidence: "high"
+    };
+    return greetingResponse;
+  }
+
   // Generate query embedding
   console.log(`[RAG] Generating embedding for: "${question}"`);
   const queryEmbedding = await generateEmbedding(question);

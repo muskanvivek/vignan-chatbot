@@ -28,6 +28,15 @@ const Chatbot = () => {
   
   const messagesEndRef = useRef(null);
 
+  // Robust session management: Clear on refresh
+  useEffect(() => {
+    console.log('Chatbot mounted - Session Initialized');
+    // We don't need to manually clear state as React state resets on refresh
+    // but we can ensure any persistent storage like localStorage is cleared if used for chat
+    sessionStorage.removeItem('chatHistory'); 
+    scrollToBottom();
+  }, []);
+
   const scrollToBottom = () => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -35,7 +44,6 @@ const Chatbot = () => {
   };
 
   useEffect(() => {
-    console.log('Chatbot mounted');
     scrollToBottom();
   }, [messages]);
 
@@ -45,31 +53,29 @@ const Chatbot = () => {
 
     const userMessage = { role: 'user', text: messageToSend };
     
-    // Get current history BEFORE updating state with the new user message
-    const currentHistory = messages.map(m => ({ role: m.role, text: m.text }));
+    // Get full conversation history for context (GPT-like session)
+    const currentHistory = messages.map(m => ({ 
+      role: m.role === 'bot' ? 'assistant' : 'user', 
+      text: m.text 
+    }));
     
-    // Update UI with user message
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      // Send the history including the current message context
       const response = await api.chat(messageToSend, language, currentHistory);
+      
       const botMessage = { 
         role: 'bot', 
         text: response.data.detailed_answer,
         data: response.data 
       };
-      setMessages(prev => [...prev, botMessage]);
       
-      setSpeechText(botMessage.text);
-      // Auto-play is fine, but ensure it doesn't crash
-      try {
-        setIsPlaying(true);
-      } catch (e) {
-        console.warn('Speech playback blocked by browser');
-      }
+      setMessages(prev => [...prev, botMessage]);
+      setSpeechText(response.data.short_answer || response.data.detailed_answer);
+      
+      if (isPlaying) setIsPlaying(true); 
     } catch (error) {
       console.error('Chat error:', error);
       const errorDetail = error.response?.data?.error || error.message;

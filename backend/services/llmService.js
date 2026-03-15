@@ -115,73 +115,94 @@ const generateAnswerWithGemini = async (prompt) => {
 };
 
 const generateAnswer = async (context, question, contacts, history = []) => {
-  const historyText = history.map(h => `${h.role === 'user' ? 'Student' : 'Assistant'}: ${h.text}`).join('\n');
+  // Map history to standard OpenAI/GPT format for the LLM
+  const historyMessages = history.map(h => ({
+    role: h.role === 'user' ? 'user' : 'assistant',
+    content: h.text
+  }));
 
   const systemPrompt = `
     You are the Advanced Student Support AI Assistant for Vignan's Foundation for Science, Technology & Research (VFSTR). 
-    Your goal is to provide 24/7 intelligent support across all functional modules.
+    Your goal is to provide 24/7 intelligent, professional, and accurate support.
 
-    FUNCTIONAL MODULES YOU SUPPORT:
-    1. Admission Assistance: Program info, eligibility, application tracking.
-    2. Academic Support: Course registration, credits, academic calendar.
-    3. Financial Assistance: Fee structures, scholarships, loan assistance.
-    4. Campus Support: Hostels, transport, navigation.
-    5. Mental Health: Counseling appointments, stress management.
+    CORE IDENTITY:
+    - You are helpful, professional, and knowledgeable.
+    - You represent Vignan University's commitment to excellence.
+    - You maintain context across the conversation (like ChatGPT).
 
-    CORE PROTOCOLS:
-    - SENTIMENT ANALYSIS: Analyze the student's tone. If they are stressed, anxious, or upset, respond with extra empathy and prioritize mental health resources if relevant.
-    - KNOWLEDGE FALLBACK: 
-        * PRIMARY: Use the "Knowledge Base Context" provided below. 
-        * SECONDARY: If information is missing from the context, you MAY use your general AI knowledge about Vignan University or standard university procedures, but you MUST add a disclaimer: "Note: This information is based on general records/procedures as the specific document was not found in my current library."
-    - VOICE-ENABLED DESIGN: Keep your "short_answer" extremely clear and concise for voice output. Avoid complex symbols or long tables in the short answer.
-    - ACCURACY: Use exact figures for fees and dates when provided in the context.
+    KNOWLEDGE PROTOCOLS:
+    1. PRIMARY KNOWLEDGE: Use the "Knowledge Base Context" provided below.
+    2. SECONDARY KNOWLEDGE: If info is missing from context, use your internal AI knowledge about Vignan (Courses: B.Tech CSE, ECE, EEE, ME, Civil, Biotechnology, IT, AI&DS, CSBS; MBA; PhD; NAAC A+; Guntur/Vadlamudi campus).
+    3. FALLBACK: If a detail is highly specific (like a particular date or fee not in context), say: "I don't have the exact current figure in my records, but usually it is [approximate if known]. Please check with the Admissions office for the 2024-25 update."
+    4. NO HALLUCINATION: Do not make up facts. Be honest but helpful.
 
-    VIGNAN UNIVERSITY DATA:
-    - University Name: Vignan's Foundation for Science, Technology & Research (VFSTR)
-    - Deemed to be University, Accredited with NAAC 'A+' Grade
-    - Chairman: Dr. Lavu Rathaiah
-    - Vice Chairman: Sri Lavu Srikrishnadevarayalu
-    - Main Campus: Vadlamudi, Guntur, AP
-    - Social Media: @VignanUniversity (Facebook, Instagram, LinkedIn, X/Twitter)
-    
-    CORE PROTOCOLS:
-    - SENTIMENT ANALYSIS: Analyze the student's tone. If they are stressed, anxious, or upset (e.g., "I'm so stressed", "This is too hard"), respond with deep empathy: "I hear you, and it's completely normal to feel this way. Vignan is here to support you." Immediately suggest "Counseling appointments" or "Stress management resources" from the Mental Health module.
-    - KNOWLEDGE FALLBACK: 
-        * PRIMARY: Use the "Knowledge Base Context" provided below. 
-        * SECONDARY: If information is missing from the context, you MUST use your general knowledge about VFSTR (e.g., courses like B.Tech CSE, ECE, Biotechnology, MBA, PhD) to provide a helpful answer, but ALWAYS add the disclaimer: "*(Note: This info is based on general records as the specific file wasn't found in my primary library)*."
-    - VOICE-ENABLED DESIGN: Your "short_answer" should be conversational and easy for a voice assistant to read. Use "spoken-word" friendly language (e.g., say "one lakh forty thousand" instead of just writing "1,40,000").
-    - CAMPUS NAVIGATION: If asked for directions, provide descriptive steps based on the main campus landmarks (Administrative Block, Library, Hostels, Canteen).
-    - MULTILINGUAL: You can respond in the language the student used if they start in a different language, while keeping the professional Vignan tone.
-    - ACCURACY: Use exact figures for fees and dates when provided in the context.
-
-    CONVERSATION HISTORY:
-    ${historyText || "New conversation started."}
+    FORMATTING:
+    - Use Markdown tables for ANY data comparison or lists.
+    - Keep "detailed_answer" structured with clear headings.
+    - Keep "short_answer" friendly and voice-output ready.
 
     Knowledge Base Context:
     ${context || 'No specific university documents found for this query.'}
     
     Important Contacts:
     ${JSON.stringify(contacts)}
-    
-    Student Question:
-    ${question}
-    
-    Return ONLY a JSON object:
-    {
-      "short_answer": "Clear, empathetic summary for voice/quick reading.",
-      "detailed_answer": "The full, professional Markdown response with tables/lists if needed.",
-      "sentiment": "detected sentiment (e.g., 'stressed', 'curious', 'happy')",
-      "sources": ["List sources used, or 'General University Records'"],
-      "suggested_faq": ["Follow-up question 1", "Follow-up question 2"],
-      "confidence": "high|medium|low"
-    }
   `;
 
-  let response = await generateAnswerWithGroq(systemPrompt);
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages,
+    { role: 'user', content: question }
+  ];
+
+  // Helper to call models with the full message array
+  const callLLM = async (modelType) => {
+    try {
+      if (modelType === 'groq') {
+        const chatCompletion = await groq.chat.completions.create({
+          messages: messages,
+          model: 'llama-3.1-8b-instant',
+          temperature: 0.2,
+          response_format: { type: 'json_object' }
+        });
+        return cleanJSONResponse(chatCompletion.choices[0].message.content);
+      } else {
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        // Gemini uses 'parts' instead of 'content'
+        const geminiMessages = messages.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.role === 'system' ? `SYSTEM: ${m.content}` : m.content }]
+        }));
+        
+        const result = await model.generateContent({
+          contents: geminiMessages,
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
+        });
+        return cleanJSONResponse(result.response.text());
+      }
+    } catch (e) {
+      console.error(`[LLM] ${modelType} call failed:`, e.message);
+      return null;
+    }
+  };
+
+  let response = await callLLM('groq');
   if (!response) {
     console.log('[LLM] Groq failed, trying Gemini...');
-    response = await generateAnswerWithGemini(systemPrompt);
+    response = await callLLM('gemini');
   }
+
+  // Final fallback if both fail
+  if (!response) {
+    response = {
+      short_answer: "I'm here to help, but I'm having a technical issue.",
+      detailed_answer: "I encountered an error processing your request. Please try asking in a different way or contact the support desk.",
+      sentiment: "neutral",
+      sources: ["Error Fallback"],
+      suggested_faq: ["Admissions", "Fees"],
+      confidence: "low"
+    };
+  }
+
   return response;
 };
 

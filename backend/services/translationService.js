@@ -17,13 +17,15 @@ const translateWithGemini = async (text, from, to) => {
 };
 
 const translate = async (text, from = 'en', to = 'en') => {
-  if (from === to || !text || from === 'English' || to === 'English') {
-    if ((from === 'en' || from === 'English') && (to === 'en' || to === 'English')) return text;
-  }
+  // Normalize language names/codes
+  const fromCode = from === 'English' ? 'en' : from;
+  const toCode = to === 'English' ? 'en' : to;
+
+  if (fromCode === toCode || !text) return text;
   
   // Prefer Gemini for translation as it is much faster and more accurate
-  console.log(`[Translate] Translating (${from} -> ${to}) using Gemini...`);
-  const geminiResult = await translateWithGemini(text, from, to);
+  console.log(`[Translate] Translating (${fromCode} -> ${toCode}) using Gemini...`);
+  const geminiResult = await translateWithGemini(text, fromCode, toCode);
   if (geminiResult) return geminiResult;
 
   // Fallback to LibreTranslate
@@ -33,8 +35,8 @@ const translate = async (text, from = 'en', to = 'en') => {
     
     const response = await axios.post(`${apiUrl}/translate`, {
       q: text,
-      source: from === 'en' ? 'en' : from,
-      target: to === 'en' ? 'en' : to,
+      source: fromCode,
+      target: toCode,
       format: 'text'
     }, { timeout: 5000 });
     return response.data.translatedText;
