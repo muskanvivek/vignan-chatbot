@@ -5,6 +5,10 @@ const { generateEmbedding } = require('./embeddingService');
 const { generateAnswer, rerankContext } = require('./llmService');
 const { performLiveWebSearch } = require('./searchService');
 
+const ENABLE_LLM_RERANK = String(process.env.ENABLE_LLM_RERANK || 'false').toLowerCase() === 'true';
+const MAX_CONTEXT_CHUNKS = Number(process.env.MAX_CONTEXT_CHUNKS || 8);
+const MAX_CHARS_PER_CHUNK = Number(process.env.MAX_CHARS_PER_CHUNK || 650);
+
 const STOPWORDS = new Set([
   'what', 'where', 'when', 'how', 'tell', 'about', 'please', 'give', 'details',
   'the', 'a', 'an', 'is', 'are', 'of', 'to', 'for', 'in', 'on', 'at', 'with', 'and',
@@ -201,10 +205,13 @@ const performVectorSearch = async (queryEmbedding, queryText, limit = 15) => {
     // Pick the top candidates for re-ranking
     const candidates = results.slice(0, 20);
     
-    console.log(`[RAG] Re-ranking ${candidates.length} candidates...`);
-    const rerankedIndices = await rerankContext(queryText, candidates.map(c => c.text));
-    
-    // Final check: If re-ranking fails or returns weird results, fallback to original top 10
+    let rerankedIndices = null;
+    if (ENABLE_LLM_RERANK) {
+      console.log(`[RAG] Re-ranking ${candidates.length} candidates...`);
+      rerankedIndices = await rerankContext(queryText, candidates.map(c => c.text));
+    }
+
+    // If reranking disabled/failed, fallback to heuristic ordering
     let finalResults = [];
     if (rerankedIndices && rerankedIndices.length > 0) {
       finalResults = rerankedIndices.map(idx => candidates[idx]).filter(Boolean);
@@ -263,7 +270,13 @@ const handleChat = async (question, history = []) => {
   
   // 1. Retrieve relevant chunks from local Knowledge Base
   const relevantChunks = await performVectorSearch(queryEmbedding, question);
-  let context = relevantChunks.map(c => `[Type: ${c.sourceType}] [Source: ${c.sourceName}] ${c.text}`).join('\n\n');
+  let context = relevantChunks
+    .slice(0, MAX_CONTEXT_CHUNKS)
+    .map(c => {
+      const clipped = (c.text || '').slice(0, MAX_CHARS_PER_CHUNK);
+      return `[Type: ${c.sourceType}] [Source: ${c.sourceName}] ${clipped}`;
+    })
+    .join('\n\n');
   
   // 2. Web Search Fallback
   const topScore = relevantChunks.length > 0 ? (relevantChunks[0].score || 0) : 0;

@@ -6,6 +6,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const DEFAULT_GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash'];
 const DEFAULT_GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 const GEMINI_RETRY_DELAY_MS = Number(process.env.GEMINI_RETRY_DELAY_MS || 10 * 60 * 1000);
+const ENABLE_GROQ_VERIFICATION = String(process.env.ENABLE_GROQ_VERIFICATION || 'false').toLowerCase() === 'true';
 let geminiBackoffUntil = 0;
 
 const isGeminiCriticalError = (message = '') => {
@@ -182,15 +183,15 @@ const splitIntoReadableBlocks = (text = '', preferDetailed = false) => {
 
 const ensureStructuredDetailedAnswer = (text = '') => {
   const cleaned = splitIntoReadableBlocks(text, true);
-  if (!cleaned) return 'Based on available records, I could not find enough details for this query.';
-
-  const introPattern = /^(based on|here\s+is|from\s+the\s+available|i\s+found)/i;
-  if (introPattern.test(cleaned)) {
-    return cleaned;
+  if (!cleaned) {
+    return 'I could not find enough details for this query in the current records.';
   }
 
-  const firstSentence = 'Based on the available records, here is the information I found.';
-  return `${firstSentence}\n\n${cleaned}`;
+  if (cleaned.length < 80) {
+    return `${cleaned}\n\nI can share more details if you tell me the exact program or category.`;
+  }
+
+  return cleaned;
 };
 
 const normalizeAnswerPayload = (response = {}, preferDetailed = false) => {
@@ -393,7 +394,7 @@ const generateAnswer = async (context, question, contacts, history = []) => {
     response = await callLLM('gemini');
   }
 
-  if (isUsableAnswerResponse(response)) {
+  if (ENABLE_GROQ_VERIFICATION && isUsableAnswerResponse(response)) {
     try {
       const verifyPrompt = `You are verifying an answer for factual grounding.
 Return ONLY JSON with EXACT schema:

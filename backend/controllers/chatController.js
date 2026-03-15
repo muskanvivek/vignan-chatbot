@@ -19,8 +19,12 @@ const chat = async (req, res) => {
     
     // 3. Translate detailed answer back to user language
     console.log('[Chat] Step 3: Translating response back...');
-    let translatedDetailedAnswer = await translate(answerData.detailed_answer, 'en', language);
-    let translatedShortAnswer = await translate(answerData.short_answer, 'en', language);
+    let translatedDetailedAnswer;
+    let translatedShortAnswer;
+    [translatedDetailedAnswer, translatedShortAnswer] = await Promise.all([
+      translate(answerData.detailed_answer, 'en', language),
+      translate(answerData.short_answer, 'en', language)
+    ]);
     
     // Fallback to original English if translation is empty
     if (!translatedDetailedAnswer || translatedDetailedAnswer.trim().length === 0) {
