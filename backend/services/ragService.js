@@ -181,7 +181,8 @@ const handleChat = async (question, history = []) => {
   
   return {
     ...answer,
-    sources: sources
+    sources: answer.sources || sources,
+    sentiment: answer.sentiment || 'neutral'
   };
 };
 

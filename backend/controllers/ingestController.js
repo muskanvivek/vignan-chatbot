@@ -4,6 +4,7 @@ const { extractTextFromPDF } = require('../utils/pdfParser');
 const { extractTextFromURL, discoverLinks } = require('../utils/webScraper');
 const { splitIntoChunks } = require('../services/chunkService');
 const { generateEmbedding } = require('../services/embeddingService');
+const { generateFAQsFromText } = require('../services/llmService');
 
 const ingestPDF = async (req, res) => {
   if (!req.file) {
@@ -46,11 +47,31 @@ const ingestPDF = async (req, res) => {
       }
     }
     
+    // 4. AI-Generated FAQs (New Feature)
+    console.log('[Ingest] Generating AI FAQs from document...');
+    const aiFaqs = await generateFAQsFromText(text);
+    for (const faq of aiFaqs) {
+      try {
+        const faqSource = await Source.create({
+          type: 'faq',
+          name: faq.question,
+          answer: faq.answer,
+          folder: (folder || '/') + '/AI-Generated-FAQs',
+          status: 'processed'
+        });
+        const faqText = `Question: ${faq.question}\nAnswer: ${faq.answer}`;
+        const embedding = await generateEmbedding(faqText);
+        await Chunk.create({ text: faqText, embedding, sourceId: faqSource._id });
+      } catch (faqErr) {
+        console.warn('[Ingest] Failed to create AI FAQ:', faqErr.message);
+      }
+    }
+    
     source.status = 'processed';
     await source.save();
     
-    console.log(`[Ingest] PDF ${originalname} processed successfully`);
-    res.json({ message: 'PDF ingested and trained successfully', sourceId: source._id, chunkCount: chunks.length });
+    console.log(`[Ingest] PDF ${originalname} processed successfully with ${aiFaqs.length} AI FAQs`);
+    res.json({ message: 'PDF ingested and trained successfully', sourceId: source._id, chunkCount: chunks.length, aiFaqCount: aiFaqs.length });
   } catch (error) {
     console.error('PDF ingestion FATAL error:', error.message);
     res.status(500).json({ error: 'Server error during PDF processing: ' + error.message });
@@ -77,8 +98,28 @@ const ingestURL = async (req, res) => {
     
     source.status = 'processed';
     await source.save();
+
+    // AI-Generated FAQs for URL
+    console.log('[Ingest] Generating AI FAQs from URL...');
+    const aiFaqs = await generateFAQsFromText(text);
+    for (const faq of aiFaqs) {
+      try {
+        const faqSource = await Source.create({
+          type: 'faq',
+          name: faq.question,
+          answer: faq.answer,
+          folder: (folder || '/') + '/AI-Generated-FAQs',
+          status: 'processed'
+        });
+        const faqText = `Question: ${faq.question}\nAnswer: ${faq.answer}`;
+        const embedding = await generateEmbedding(faqText);
+        await Chunk.create({ text: faqText, embedding, sourceId: faqSource._id });
+      } catch (faqErr) {
+        console.warn('[Ingest] Failed to create AI FAQ:', faqErr.message);
+      }
+    }
     
-    res.json({ message: 'URL ingested successfully', sourceId: source._id });
+    res.json({ message: 'URL ingested successfully', sourceId: source._id, aiFaqCount: aiFaqs.length });
   } catch (error) {
     console.error('URL ingestion failed:', error.message);
     res.status(500).json({ error: error.message });

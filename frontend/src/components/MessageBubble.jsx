@@ -1,17 +1,38 @@
 import React from 'react';
-import { User, Bot, Volume2, Phone, Mail, FileText } from 'lucide-react';
+import { User, Bot, Volume2, Phone, Mail, FileText, Heart, ShieldAlert, Smile, Facebook, Instagram, Twitter, Linkedin } from 'lucide-react';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const MessageBubble = ({ message, onSpeak }) => {
   const isBot = message.role === 'bot';
+  const sentiment = message.data?.sentiment?.toLowerCase() || '';
+
+  const getSentimentIcon = () => {
+    if (sentiment.includes('stressed') || sentiment.includes('anxious') || sentiment.includes('sad')) 
+      return <Heart size={14} color="#e74c3c" fill="#e74c3c" />;
+    if (sentiment.includes('happy') || sentiment.includes('satisfied') || sentiment.includes('curious')) 
+      return <Smile size={14} color="#27ae60" />;
+    return null;
+  };
+
+  const getSocialLinks = () => {
+    return (
+      <div style={{ display: 'flex', gap: '10px', marginTop: '0.5rem' }}>
+        <a href="https://facebook.com/VignanUniversity" target="_blank" rel="noreferrer"><Facebook size={16} color="#1877F2" /></a>
+        <a href="https://instagram.com/VignanUniversity" target="_blank" rel="noreferrer"><Instagram size={16} color="#E4405F" /></a>
+        <a href="https://twitter.com/VignanUniversity" target="_blank" rel="noreferrer"><Twitter size={16} color="#1DA1F2" /></a>
+        <a href="https://linkedin.com/school/vignan-university" target="_blank" rel="noreferrer"><Linkedin size={16} color="#0A66C2" /></a>
+      </div>
+    );
+  };
   
   return (
     <div className={`message-row ${isBot ? 'bot' : 'user'}`}>
       <div className="message-content">
-        <div className="message-header">
+        <div className="message-header" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {isBot ? 'Vignan AI Assistant' : 'Student'}
+          {isBot && getSentimentIcon()}
         </div>
         <div className="message-text">
           {isBot ? (
@@ -52,14 +73,21 @@ const MessageBubble = ({ message, onSpeak }) => {
               </div>
             )}
 
-            <button 
-              onClick={() => onSpeak(message.text)}
-              className="voice-btn voice-output-btn"
-              title="Listen to response"
-              style={{ width: '32px', height: '32px' }}
-            >
-              <Volume2 size={16} />
-            </button>
+            <div style={{ marginTop: '0.5rem', borderTop: '1px dashed #eee', paddingTop: '0.5rem' }}>
+              <div style={{ fontSize: '0.7rem', color: '#b2bec3', marginBottom: '0.25rem' }}>Stay Connected:</div>
+              {getSocialLinks()}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+              <button 
+                onClick={() => onSpeak(message.data.short_answer || message.text)}
+                className="voice-btn voice-output-btn"
+                title="Listen to response"
+                style={{ width: '32px', height: '32px' }}
+              >
+                <Volume2 size={16} />
+              </button>
+            </div>
           </div>
         )}
       </div>
